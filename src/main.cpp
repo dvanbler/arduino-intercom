@@ -14,8 +14,6 @@ SpeakerDriver::BufferPtr buffers = speaker.get_buffers();
 IPAddress ip;
 WiFiUDP udp;
 
-bool setup_success = false;
-
 int init_wifi() {
     if (WiFi.status() == WL_NO_MODULE) {
         return -1;
