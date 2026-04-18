@@ -43,9 +43,6 @@ int SpeakerDriver::reserve_buffer() {
         }
         buffer_num++;
         buffer_num = buffer_num & NUM_BUFFERS_MASK;
-        /*if (buffer_num == NUM_BUFFERS) {
-            buffer_num = 0;
-        }*/
     }
     return -1;
 }
@@ -64,9 +61,6 @@ void SpeakerDriver::on_timer(timer_callback_args_t* args) {
             read_buffer_pos = 0;
             read_buffer_num++;
             read_buffer_num = read_buffer_num & NUM_BUFFERS_MASK;
-            /*if (read_buffer_num == NUM_BUFFERS) {
-                read_buffer_num = 0;
-            }*/
         }
     } else {
         dma_buffer[dma_buffer_write_pos++] = 0;
@@ -74,9 +68,6 @@ void SpeakerDriver::on_timer(timer_callback_args_t* args) {
     }
 
     dma_buffer_write_pos = dma_buffer_write_pos & DMA_BUFFER_LEN_MASK;
-    /*if (dma_buffer_write_pos == DMA_BUFFER_LEN) {
-        dma_buffer_write_pos = 0;
-    }*/
 }
 
 SpeakerDriver::BeginStatus SpeakerDriver::init_dac() {
