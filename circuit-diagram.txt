@@ -11,10 +11,12 @@
 |                |                       +--| R+    LOUT+ |---------|       |
 |          IN A1 |---+                      |             |         +-------+
 +----------------+   |                 GND--| L-      VDD |-- +5V
-                     |                      |             |
-                     |                 GND--| R-      GND |-- GND
-                     |                      |             |
-                     |                      +-------------+
+      |  |           |                      |             |
+      ^  v           |                 GND--| R-      GND |-- GND
+      |  |           |                      |             |
+     [WIFI]          |                      +-------------+
+   UDP Packets       |
+548-byte payloads    |
                      |
                      |
                      |                     Electret Microphone
