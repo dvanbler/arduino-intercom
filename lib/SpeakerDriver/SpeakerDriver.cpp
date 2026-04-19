@@ -59,7 +59,6 @@ void SpeakerDriver::on_timer(timer_callback_args_t* args) {
         }
     } else {
         dma_buffer[dma_buffer_write_pos++] = 0;
-        no_data_events++;
     }
 
     dma_buffer_write_pos = dma_buffer_write_pos & DMA_BUFFER_LEN_MASK;

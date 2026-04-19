@@ -7,13 +7,15 @@
 
 class MicDriver {
    public:
-    explicit MicDriver(float freq_hz, pin_size_t adc_pin_number,
-                       uint32_t dmac_channel);
-    ~MicDriver();
-
     static constexpr int DMA_BUFFER_LEN_BITS = 9;
     static constexpr int DMA_BUFFER_LEN = 1 << DMA_BUFFER_LEN_BITS;
     static constexpr int DMA_BUFFER_LEN_MASK = DMA_BUFFER_LEN - 1;
+
+    static constexpr int BUFFER_LEN = 548;
+
+    static constexpr int NUM_BUFFERS_BITS = 3;
+    static constexpr int NUM_BUFFERS = 1 << NUM_BUFFERS_BITS;
+    static constexpr int NUM_BUFFERS_MASK = NUM_BUFFERS - 1;
 
     enum class BeginStatus {
         SUCCESS = 0,
@@ -21,10 +23,6 @@ class MicDriver {
         FAIL_CANNOT_GET_TIMER = -5,
         FAIL_TIMER_INDEX_OUT_OF_RANGE = -6
     };
-
-    BeginStatus begin();
-
-    void print_debug();
 
    private:
     const float freq_hz;
@@ -43,6 +41,16 @@ class MicDriver {
     // memory that will be read by DMA, written to by timer_callback
     uint16_t dma_buffer[DMA_BUFFER_LEN] __attribute__((aligned(4))) = {};
 
+   public:
+    explicit MicDriver(float freq_hz, pin_size_t adc_pin_number,
+                       uint32_t dmac_channel);
+    ~MicDriver();
+
+    BeginStatus begin();
+
+    void print_debug();
+
+   private:
     MicDriver::BeginStatus init_timer();
 
     // callback to handle moving data from the dma_buffer to sample buffers

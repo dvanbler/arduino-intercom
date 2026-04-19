@@ -5,19 +5,13 @@
 
 class SpeakerDriver {
    public:
-    explicit SpeakerDriver(float freq_hz, pin_size_t dac_pin_number,
-                           uint32_t dmac_channel);
-    ~SpeakerDriver();
-
-    static constexpr int DMA_BUFFER_LEN_BITS =
-        9;  // buffer length must be a power of 2
+    static constexpr int DMA_BUFFER_LEN_BITS = 9;
     static constexpr int DMA_BUFFER_LEN = 1 << DMA_BUFFER_LEN_BITS;
     static constexpr int DMA_BUFFER_LEN_MASK = DMA_BUFFER_LEN - 1;
 
     static constexpr int BUFFER_LEN = 548;
 
-    static constexpr int NUM_BUFFERS_BITS =
-        3;  // buffer length must be a power of 2
+    static constexpr int NUM_BUFFERS_BITS = 3;
     static constexpr int NUM_BUFFERS = 1 << NUM_BUFFERS_BITS;
     static constexpr int NUM_BUFFERS_MASK = NUM_BUFFERS - 1;
 
@@ -34,28 +28,20 @@ class SpeakerDriver {
         FAIL_TIMER_INDEX_OUT_OF_RANGE = -6
     };
 
-    BeginStatus begin();
-
-    BufferPtr get_buffers();
-
-    // Gets the index of next buffer you can write to. This must only be called
-    // once prior to calling release_buffer. Returns -1 if no buffer is
-    // available yet.
-    int reserve_buffer();
-
-    // Indicates that the buffer is ready to be sent to the speaker.
-    // Modifications must not be made to the buffer after this call.
-    void release_buffer(int buffer_num, bool populated);
-
-    volatile unsigned long no_data_events = 0;
-
    private:
     const float freq_hz;
     const pin_size_t dac_pin_number;
     const uint32_t dmac_channel;
 
+    void* dac_address;
+
+    dmac_instance_ctrl_t dmac_ctrl = {};
+
+    FspTimer timer;
+    elc_event_t timer_event;
+
     // memory that will be read by DMA, written to by timer_callback
-    uint16_t dma_buffer[DMA_BUFFER_LEN] __attribute__((aligned(4))) = {};
+    volatile uint16_t dma_buffer[DMA_BUFFER_LEN] __attribute__((aligned(4))) = {};
 
     // current write position in the dma buffer
     volatile int dma_buffer_write_pos = DMA_BUFFER_LEN / 2;
@@ -72,18 +58,25 @@ class SpeakerDriver {
     // current read position in the current buffer
     volatile int read_buffer_pos = 0;
 
-    // timer that will trigger a dma transfer, and write more data to the
-    // dma buffer in lock-step
-    FspTimer timer;
+   public:
+    explicit SpeakerDriver(float freq_hz, pin_size_t dac_pin_number,
+                           uint32_t dmac_channel);
+    ~SpeakerDriver();
 
-    // address of dac output register
-    void* dac_address;
+    BeginStatus begin();
 
-    // event that will trigger the dma transfer
-    elc_event_t timer_event;
+    BufferPtr get_buffers();
 
-    dmac_instance_ctrl_t dmac_ctrl;
+    // Gets the index of next buffer you can write to. This must only be called
+    // once prior to calling release_buffer. Returns -1 if no buffer is
+    // available yet.
+    int reserve_buffer();
 
+    // Indicates that the buffer is ready to be sent to the speaker.
+    // Modifications must not be made to the buffer after this call.
+    void release_buffer(int buffer_num, bool populated);
+
+   private:
     SpeakerDriver::BeginStatus init_dac();
 
     SpeakerDriver::BeginStatus init_timer();
