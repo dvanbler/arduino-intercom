@@ -63,7 +63,7 @@ void SpeakerDriver::on_timer(timer_callback_args_t* args) {
             read_buffer_num = read_buffer_num & NUM_BUFFERS_MASK;
         }
     } else {
-        dma_buffer[dma_buffer_write_pos++] = 2048; // 12-bit unsigned midpoint
+        dma_buffer[dma_buffer_write_pos++] = 0;
         no_data_events++;
     }
 
