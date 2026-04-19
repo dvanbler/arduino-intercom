@@ -5,8 +5,11 @@
 #include <r_dmac.h>
 #include <r_elc.h>
 
-MicDriver::MicDriver(float freq_hz, pin_size_t adc_pin_number)
-    : freq_hz(freq_hz), adc_pin_number(adc_pin_number) {}
+MicDriver::MicDriver(float freq_hz, pin_size_t adc_pin_number,
+                     uint32_t dmac_channel)
+    : freq_hz(freq_hz),
+      adc_pin_number(adc_pin_number),
+      dmac_channel(dmac_channel) {}
 
 MicDriver::~MicDriver() {}
 
@@ -72,7 +75,7 @@ MicDriver::BeginStatus MicDriver::begin() {
     // Enable scanning on only the specified input pin
     adc_window_cfg_t adc_window_cfg = {};
     adc_channel_cfg_t adc_ch_cfg = {};
-    adc_ch_cfg.scan_mask = (1U << bsp_pin); // See ADC_MASK_CHANNEL_0;
+    adc_ch_cfg.scan_mask = (1U << bsp_pin);  // See ADC_MASK_CHANNEL_0;
     adc_ch_cfg.scan_mask_group_b = 0;
     adc_ch_cfg.add_mask = 0;
     adc_ch_cfg.p_window_cfg = &adc_window_cfg;
@@ -95,20 +98,27 @@ MicDriver::BeginStatus MicDriver::begin() {
     dmac_extend_cfg.activation_source = ELC_EVENT_ADC0_SCAN_END;
     dmac_extend_cfg.p_callback = nullptr;
     dmac_extend_cfg.p_context = nullptr;
-    dmac_extend_cfg.channel = 1;
+    dmac_extend_cfg.channel = dmac_channel;
     dmac_extend_cfg.offset = 1;
     dmac_extend_cfg.src_buffer_size = 1;
     dmac_extend_cfg.irq = FSP_INVALID_VECTOR;
     dmac_extend_cfg.ipl = 12;
 
-    dmac_info.transfer_settings_word_b.dest_addr_mode = TRANSFER_ADDR_MODE_INCREMENTED;
+    dmac_info.transfer_settings_word_b.dest_addr_mode =
+        TRANSFER_ADDR_MODE_INCREMENTED;
     dmac_info.transfer_settings_word_b.src_addr_mode = TRANSFER_ADDR_MODE_FIXED;
     dmac_info.transfer_settings_word_b.mode = TRANSFER_MODE_REPEAT;
     dmac_info.transfer_settings_word_b.size = TRANSFER_SIZE_2_BYTE;
-    dmac_info.transfer_settings_word_b.repeat_area = TRANSFER_REPEAT_AREA_DESTINATION;
-    dmac_info.p_src = (void*)&R_ADC0->ADDR[bsp_pin]; // (void*)&R_ADC0->ADDR[0];
+    dmac_info.transfer_settings_word_b.repeat_area =
+        TRANSFER_REPEAT_AREA_DESTINATION;
+    dmac_info.transfer_settings_word_b.irq = TRANSFER_IRQ_END;
+    dmac_info.transfer_settings_word_b.chain_mode =
+        TRANSFER_CHAIN_MODE_DISABLED;
+    dmac_info.p_src =
+        (void*)&R_ADC0->ADDR[bsp_pin];  // (void*)&R_ADC0->ADDR[0];
     dmac_info.p_dest = (void*)&dma_buffer[0];
-    dmac_info.length = MicDriver::DMA_BUFFER_LEN;
+    dmac_info.length = DMA_BUFFER_LEN;
+    dmac_info.num_blocks = 0;
 
     R_DMAC_Open(&dmac_ctrl, &dmac_cfg);
     R_DMAC_Enable(&dmac_ctrl);
@@ -120,8 +130,6 @@ MicDriver::BeginStatus MicDriver::begin() {
 
     return MicDriver::BeginStatus::SUCCESS;
 }
-
-void MicDriver::end() {}
 
 void MicDriver::on_timer(timer_callback_args_t* args) { callback_count++; }
 

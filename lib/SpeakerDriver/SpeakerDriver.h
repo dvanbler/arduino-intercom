@@ -5,16 +5,19 @@
 
 class SpeakerDriver {
    public:
-    explicit SpeakerDriver(float freq_hz, pin_size_t dac_pin_number);
+    explicit SpeakerDriver(float freq_hz, pin_size_t dac_pin_number,
+                           uint32_t dmac_channel);
     ~SpeakerDriver();
 
-    static constexpr int DMA_BUFFER_LEN_BITS = 9; // buffer length must be a power of 2
+    static constexpr int DMA_BUFFER_LEN_BITS =
+        9;  // buffer length must be a power of 2
     static constexpr int DMA_BUFFER_LEN = 1 << DMA_BUFFER_LEN_BITS;
     static constexpr int DMA_BUFFER_LEN_MASK = DMA_BUFFER_LEN - 1;
 
     static constexpr int BUFFER_LEN = 548;
 
-    static constexpr int NUM_BUFFERS_BITS = 3; // buffer length must be a power of 2
+    static constexpr int NUM_BUFFERS_BITS =
+        3;  // buffer length must be a power of 2
     static constexpr int NUM_BUFFERS = 1 << NUM_BUFFERS_BITS;
     static constexpr int NUM_BUFFERS_MASK = NUM_BUFFERS - 1;
 
@@ -33,8 +36,6 @@ class SpeakerDriver {
 
     BeginStatus begin();
 
-    void end();
-
     BufferPtr get_buffers();
 
     // Gets the index of next buffer you can write to. This must only be called
@@ -49,8 +50,9 @@ class SpeakerDriver {
     volatile unsigned long no_data_events = 0;
 
    private:
-    float freq_hz;
+    const float freq_hz;
     const pin_size_t dac_pin_number;
+    const uint32_t dmac_channel;
 
     // memory that will be read by DMA, written to by timer_callback
     uint16_t dma_buffer[DMA_BUFFER_LEN] __attribute__((aligned(4))) = {};
@@ -80,10 +82,7 @@ class SpeakerDriver {
     // event that will trigger the dma transfer
     elc_event_t timer_event;
 
-    dmac_instance_ctrl_t dma_ctrl;
-    transfer_info_t dma_info;
-    dmac_extended_cfg_t dma_extend_cfg;
-    transfer_cfg_t dma_cfg = {&dma_info, &dma_extend_cfg};
+    dmac_instance_ctrl_t dmac_ctrl;
 
     SpeakerDriver::BeginStatus init_dac();
 

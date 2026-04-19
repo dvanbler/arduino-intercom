@@ -9,10 +9,16 @@
 #define UDP_PORT 6769
 #define FREQ_HZ 32000.0
 
-SpeakerDriver speaker(FREQ_HZ, A0);
+#define SPEAKER_PIN A0
+#define SPEAKER_DMA_CHANNEL 0
+
+#define MIC_PIN A1
+#define MIC_DMA_CHANNEL 1
+
+SpeakerDriver speaker(FREQ_HZ, SPEAKER_PIN, SPEAKER_DMA_CHANNEL);
 SpeakerDriver::BufferPtr buffers = speaker.get_buffers();
 
-MicDriver mic(FREQ_HZ, A1);
+MicDriver mic(FREQ_HZ, MIC_PIN, MIC_DMA_CHANNEL);
 
 IPAddress ip;
 WiFiUDP udp;

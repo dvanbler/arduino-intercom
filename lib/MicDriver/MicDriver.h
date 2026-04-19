@@ -1,14 +1,14 @@
 #pragma once
 
+#include <FspTimer.h>
 #include <r_adc.h>
 #include <r_dmac.h>
 #include <r_elc.h>
 
-#include <FspTimer.h>
-
 class MicDriver {
    public:
-    explicit MicDriver(float freq_hz, pin_size_t adc_pin_number);
+    explicit MicDriver(float freq_hz, pin_size_t adc_pin_number,
+                       uint32_t dmac_channel);
     ~MicDriver();
 
     static constexpr int DMA_BUFFER_LEN_BITS = 9;
@@ -24,13 +24,12 @@ class MicDriver {
 
     BeginStatus begin();
 
-    void end();
-
     void print_debug();
 
    private:
-    float freq_hz;
+    const float freq_hz;
     const pin_size_t adc_pin_number;
+    const uint32_t dmac_channel;
 
     volatile unsigned long callback_count = 0;
 

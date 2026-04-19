@@ -3,8 +3,11 @@
 #include <FspTimer.h>
 #include <dac.h>
 
-SpeakerDriver::SpeakerDriver(float freq_hz, pin_size_t dac_pin_number)
-    : freq_hz(freq_hz), dac_pin_number(dac_pin_number) {}
+SpeakerDriver::SpeakerDriver(float freq_hz, pin_size_t dac_pin_number,
+                             uint32_t dmac_channel)
+    : freq_hz(freq_hz),
+      dac_pin_number(dac_pin_number),
+      dmac_channel(dmac_channel) {}
 
 SpeakerDriver::~SpeakerDriver() {}
 
@@ -23,17 +26,7 @@ SpeakerDriver::BeginStatus SpeakerDriver::begin() {
     return rv;
 }
 
-void SpeakerDriver::end() {
-    timer.stop();
-    timer.close();
-    R_DMAC_Disable(&dma_ctrl);
-    R_DMAC_Close(&dma_ctrl);
-    timer.end();
-}
-
-SpeakerDriver::BufferPtr SpeakerDriver::get_buffers() {
-    return buffers;
-}
+SpeakerDriver::BufferPtr SpeakerDriver::get_buffers() { return buffers; }
 
 int SpeakerDriver::reserve_buffer() {
     int buffer_num = read_buffer_num;
@@ -53,8 +46,10 @@ void SpeakerDriver::release_buffer(int buffer_num, bool populated) {
 
 void SpeakerDriver::on_timer(timer_callback_args_t* args) {
     if (buffer_populated[read_buffer_num]) {
-        dma_buffer[dma_buffer_write_pos++] = (buffers[read_buffer_num][read_buffer_pos++] << 4); // convert 8-bit sample -> 12-bit
-        
+        dma_buffer[dma_buffer_write_pos++] =
+            (buffers[read_buffer_num][read_buffer_pos++]
+             << 4);  // convert 8-bit sample -> 12-bit
+
         if (read_buffer_pos == BUFFER_LEN) {
             buffer_populated[read_buffer_num] = false;
 
@@ -160,31 +155,37 @@ SpeakerDriver::BeginStatus SpeakerDriver::init_timer() {
 }
 
 SpeakerDriver::BeginStatus SpeakerDriver::init_dma() {
-    dma_info.transfer_settings_word_b.dest_addr_mode = TRANSFER_ADDR_MODE_FIXED;
-    dma_info.transfer_settings_word_b.repeat_area = TRANSFER_REPEAT_AREA_SOURCE;
-    dma_info.transfer_settings_word_b.irq = TRANSFER_IRQ_END;
-    dma_info.transfer_settings_word_b.chain_mode = TRANSFER_CHAIN_MODE_DISABLED;
-    dma_info.transfer_settings_word_b.src_addr_mode =
+    transfer_info_t dmac_info = {};
+    dmac_extended_cfg_t dmac_extend_cfg = {};
+    transfer_cfg_t dmac_cfg = {&dmac_info, &dmac_extend_cfg};
+
+    dmac_extend_cfg.activation_source = timer_event;
+    dmac_extend_cfg.p_callback = nullptr;
+    dmac_extend_cfg.p_context = nullptr;
+    dmac_extend_cfg.channel = dmac_channel;
+    dmac_extend_cfg.offset = 1;
+    dmac_extend_cfg.src_buffer_size = 1;
+    dmac_extend_cfg.irq = FSP_INVALID_VECTOR;
+    dmac_extend_cfg.ipl = 12;
+
+    dmac_info.transfer_settings_word_b.dest_addr_mode =
+        TRANSFER_ADDR_MODE_FIXED;
+    dmac_info.transfer_settings_word_b.src_addr_mode =
         TRANSFER_ADDR_MODE_INCREMENTED;
-    dma_info.transfer_settings_word_b.size = TRANSFER_SIZE_2_BYTE;
-    dma_info.transfer_settings_word_b.mode = TRANSFER_MODE_REPEAT;
-    dma_info.p_dest = dac_address;
-    dma_info.p_src = dma_buffer;
-    dma_info.num_blocks = 0;
-    dma_info.length = DMA_BUFFER_LEN;
+    dmac_info.transfer_settings_word_b.mode = TRANSFER_MODE_REPEAT;
+    dmac_info.transfer_settings_word_b.size = TRANSFER_SIZE_2_BYTE;
+    dmac_info.transfer_settings_word_b.repeat_area =
+        TRANSFER_REPEAT_AREA_SOURCE;
+    dmac_info.transfer_settings_word_b.irq = TRANSFER_IRQ_END;
+    dmac_info.transfer_settings_word_b.chain_mode =
+        TRANSFER_CHAIN_MODE_DISABLED;
+    dmac_info.p_src = (void*)&dma_buffer[0];
+    dmac_info.p_dest = dac_address;
+    dmac_info.length = DMA_BUFFER_LEN;
+    dmac_info.num_blocks = 0;
 
-    dma_extend_cfg.offset =
-        1;  // offset size if using TRANSFER_ADDR_MODE_OFFSET
-    dma_extend_cfg.src_buffer_size = 1;       //  used for repeat - block mode
-    dma_extend_cfg.irq = FSP_INVALID_VECTOR;  //  IRQManager will set this
-    dma_extend_cfg.ipl = BSP_IRQ_DISABLED;    //  IRQManager will set this
-    dma_extend_cfg.channel = 0;               //  IRQManager will set this
-    dma_extend_cfg.p_context =
-        NULL;  // void* pointer to anything will be available in callback
-    dma_extend_cfg.activation_source = ELC_EVENT_GPT4_COUNTER_OVERFLOW;
-
-    R_DMAC_Open(&dma_ctrl, &dma_cfg);
-    R_DMAC_Enable(&dma_ctrl);
+    R_DMAC_Open(&dmac_ctrl, &dmac_cfg);
+    R_DMAC_Enable(&dmac_ctrl);
 
     timer.open();
     timer.start();
