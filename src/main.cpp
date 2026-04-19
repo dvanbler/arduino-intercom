@@ -3,6 +3,7 @@
 #include <WiFiS3.h>
 
 #include "SpeakerDriver.h"
+#include "MicDriver.h"
 #include "secrets.h"
 
 #define UDP_PORT 6769
@@ -10,6 +11,8 @@
 
 SpeakerDriver speaker(FREQ_HZ, A0);
 SpeakerDriver::BufferPtr buffers = speaker.get_buffers();
+
+MicDriver mic(FREQ_HZ, A1);
 
 IPAddress ip;
 WiFiUDP udp;
@@ -63,6 +66,13 @@ int setup_impl() {
     }
     Serial.println(" [√]");
 
+    Serial.print("Init mic driver...");
+    auto mic_rv = mic.begin();
+    if (mic_rv != MicDriver::BeginStatus::SUCCESS) {
+        return -1;
+    }
+    Serial.println(" [√]");
+
     return 0;
 }
 
@@ -94,6 +104,6 @@ void loop() {
 
     if (now - last > 1000) {
         last = now;
-        // Serial.println(speaker.no_data_events);
+        mic.print_debug();
     }
 }
