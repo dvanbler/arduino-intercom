@@ -16,7 +16,7 @@ class SpeakerDriver {
     static constexpr int NUM_BUFFERS_MASK = NUM_BUFFERS - 1;
 
     // pointer to array of buffers
-    typedef uint8_t (*BufferPtr)[SpeakerDriver::BUFFER_LEN];
+    typedef uint8_t (*BufferPtr)[BUFFER_LEN];
 
     enum class BeginStatus {
         SUCCESS = 0,
@@ -41,13 +41,14 @@ class SpeakerDriver {
     elc_event_t timer_event;
 
     // memory that will be read by DMA, written to by timer_callback
-    volatile uint16_t dma_buffer[DMA_BUFFER_LEN] __attribute__((aligned(4))) = {};
+    volatile uint16_t dma_buffer[DMA_BUFFER_LEN]
+        __attribute__((aligned(4))) = {};
 
     // current write position in the dma buffer
     volatile int dma_buffer_write_pos = DMA_BUFFER_LEN / 2;
 
     // buffers to hold pending samples
-    uint8_t buffers[SpeakerDriver::NUM_BUFFERS][SpeakerDriver::BUFFER_LEN];
+    uint8_t buffers[NUM_BUFFERS][BUFFER_LEN];
 
     // is the buffer ready to write to the dma buffer?
     volatile bool buffer_populated[NUM_BUFFERS] = {0};
@@ -77,11 +78,11 @@ class SpeakerDriver {
     void release_buffer(int buffer_num, bool populated);
 
    private:
-    SpeakerDriver::BeginStatus init_dac();
+    BeginStatus init_dac();
 
-    SpeakerDriver::BeginStatus init_timer();
+    BeginStatus init_timer();
 
-    SpeakerDriver::BeginStatus init_dma();
+    BeginStatus init_dma();
 
     // callback to handle moving data from the sample buffers to the dma_buffer
     void on_timer(timer_callback_args_t* args);
