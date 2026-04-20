@@ -5,6 +5,8 @@
 #include <r_dmac.h>
 #include <r_elc.h>
 
+#include <algorithm>
+
 MicDriver::MicDriver(float freq_hz, pin_size_t adc_pin_number,
                      uint32_t dmac_channel)
     : freq_hz(freq_hz),
@@ -131,10 +133,56 @@ MicDriver::BeginStatus MicDriver::begin() {
     return MicDriver::BeginStatus::SUCCESS;
 }
 
-void MicDriver::on_timer(timer_callback_args_t* args) { callback_count++; }
+MicDriver::BufferPtr MicDriver::get_buffers() { return buffers; }
+
+int MicDriver::reserve_buffer_for_read() {
+    int buffer_num = write_buffer_num;
+    for (int i = 0; i < NUM_BUFFERS; i++) {
+        if (buffer_populated[buffer_num]) {
+            return buffer_num;
+        }
+        buffer_num++;
+        buffer_num = buffer_num & NUM_BUFFERS_MASK;
+    }
+    return -1;
+}
+
+void MicDriver::release_buffer(int buffer_num, bool was_read) {
+    buffer_populated[buffer_num] = !was_read;
+}
+
+void MicDriver::on_timer(timer_callback_args_t* args) {
+    // ADC value range (volts): 1.25V +- 1.0V, [0.25V - 2.25V]
+    // With 14-bit ADC and 5V VDD, we get these parameters:
+    constexpr int32_t IN_MIN = 819;
+    constexpr int32_t IN_MAX = 7373;
+    constexpr int32_t OUT_MIN = 0;
+    constexpr int32_t OUT_MAX = 255;
+    constexpr int32_t SCALE_FIXED =
+        (int32_t)((OUT_MAX - OUT_MIN) * 16384.0f / (IN_MAX - IN_MIN));
+
+    if (!buffer_populated[write_buffer_num]) {
+        // Convert 14-bit adc mic reading to 8-bit sample
+        int32_t dma_value = dma_buffer[dma_buffer_read_pos++];
+        int32_t result = (dma_value - IN_MIN) * SCALE_FIXED >> 14;
+        uint8_t clamped = (uint8_t)std::clamp(result, OUT_MIN, OUT_MAX);
+        buffers[write_buffer_num][write_buffer_pos++] = clamped;
+
+        if (write_buffer_pos == BUFFER_LEN) {
+            buffer_populated[write_buffer_num] = true;
+
+            write_buffer_pos = 0;
+            write_buffer_num++;
+            write_buffer_num &= NUM_BUFFERS_MASK;
+        }
+    } else {
+        dma_buffer_read_pos++;
+    }
+
+    dma_buffer_read_pos &= DMA_BUFFER_LEN_MASK;
+}
 
 void MicDriver::print_debug() {
-    // value range (volts): 1.25 +- 1.0 = 0.25 - 2.25
     // pct range: (.25 / 5) - (2.25 / 5) = .05 - .45
     // 14-bit range = 819 - 7373
 
