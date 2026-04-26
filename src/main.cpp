@@ -16,6 +16,8 @@
 #define MIC_PIN A1
 #define MIC_DMA_CHANNEL 1
 
+#define PTT_PIN A2
+
 SpeakerDriver speaker(FREQ_HZ, SPEAKER_PIN, SPEAKER_DMA_CHANNEL);
 SpeakerDriver::BufferPtr speaker_buffers = speaker.get_buffers();
 
@@ -93,7 +95,7 @@ void setup() {
         while (true);
     }
 
-    pinMode(D4, INPUT_PULLUP);
+    pinMode(PTT_PIN, INPUT_PULLUP);
 }
 
 void loop() {
@@ -102,7 +104,7 @@ void loop() {
     static unsigned long last = 0;
     unsigned long now = millis();
 
-    if (digitalRead(D4) == HIGH) {
+    if (digitalRead(PTT_PIN) == HIGH) {
         // Default operation - play received audio stream from network
         int buffer_num = speaker.reserve_buffer();
         if (buffer_num >= 0) {
