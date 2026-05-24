@@ -1,6 +1,6 @@
 # An Arduino UNO R4 Wifi Intercom
 
-During normal operation, the device plays audio streamed to it over the network. While a button remains pressed, it switches to a mode that streams mic audio back to the last ip address that streamed audio to it.
+The device plays audio streamed to it over the network. It also features a push-to-talk button. While pressed, it streams mic audio back to the last ip address that streamed audio to it.
 
 ## Companion Android App
 
