@@ -100,7 +100,7 @@ void setup() {
 
 void loop() {
     static unsigned long last_ip_check = 0;
-
+    
     static unsigned long last = 0;
     unsigned long now = millis();
 
@@ -109,7 +109,7 @@ void loop() {
         int buffer_num = speaker.reserve_buffer();
         if (buffer_num >= 0) {
             int available = udp.parsePacket();
-            if (available == SpeakerDriver::BUFFER_LEN) {
+            if (available > 0) {
                 if (!has_ip || now - last_ip_check > 10000) {
                     // periodically update the ip address to the latest sending remote
                     last_receive_from_ip = udp.remoteIP();
@@ -118,19 +118,26 @@ void loop() {
                     Serial.println(last_receive_from_ip);
                 }
                 udp.read(speaker_buffers[buffer_num], available);
+                if (available < SpeakerDriver::BUFFER_LEN) {
+                    for (int i = available; i < SpeakerDriver::BUFFER_LEN; i++) {
+                        speaker_buffers[buffer_num][i] = 0;
+                    }
+                }
                 speaker.release_buffer(buffer_num, true);
             } else {
                 speaker.release_buffer(buffer_num, false);
             }
         }
-    } else if (last_receive_from_ip != INADDR_NONE) {
-        // Button is pressed, and we have a target IP: Stream mic audio
-        int buffer_num = mic.reserve_buffer_for_read();
-        if (buffer_num >= 0) {
-            udp.beginPacket(last_receive_from_ip, SEND_UDP_PORT);
-            udp.write(mic_buffers[buffer_num], MicDriver::BUFFER_LEN);
-            udp.endPacket();
-            mic.release_buffer(buffer_num, true);
+    } else {
+        if (last_receive_from_ip != INADDR_NONE) {
+            // Button is pressed, and we have a target IP: Stream mic audio
+            int buffer_num = mic.reserve_buffer_for_read();
+            if (buffer_num >= 0) {
+                udp.beginPacket(last_receive_from_ip, SEND_UDP_PORT);
+                udp.write(mic_buffers[buffer_num], MicDriver::BUFFER_LEN);
+                udp.endPacket();
+                mic.release_buffer(buffer_num, true);
+            }
         }
     }
 
