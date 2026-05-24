@@ -2,6 +2,10 @@
 
 During normal operation, the device plays audio streamed to it over the network. While a button remains pressed, it switches to a mode that streams mic audio back to the last ip address that streamed audio to it.
 
+## Companion Android App
+
+See the [companion app repo](https://github.com/dvanbler/android-intercom).
+
 ## Stock Wifi Throughput Limitations
 
 By default, the serial link between the ESP32 and the R4 is hard-coded to 115200 baud and cannot be changed in code. This allows for a maximum wifi throughput of approximately 9 KB/s. In practice, this means network audio streaming is limited to 8 kHz, with 8 bits per sample.
