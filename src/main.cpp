@@ -28,7 +28,7 @@ IPAddress ip;
 WiFiUDP udp;
 
 IPAddress last_receive_from_ip;
-bool has_ip = true;
+bool has_ip = false;
 
 int init_wifi() {
     if (WiFi.status() == WL_NO_MODULE) {
@@ -128,8 +128,7 @@ void loop() {
                     udp.flush();
                 }
                 if (bytes_to_read < SpeakerDriver::BUFFER_LEN) {
-                    for (int i = bytes_to_read; i < SpeakerDriver::BUFFER_LEN;
-                         i++) {
+                    for (int i = bytes_to_read; i < SpeakerDriver::BUFFER_LEN; i++) {
                         speaker_buffers[buffer_num][i] = 0;
                     }
                 }
