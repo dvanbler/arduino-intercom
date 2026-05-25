@@ -101,7 +101,6 @@ void setup() {
 void loop() {
     static unsigned long last_ip_check = 0;
     
-    static unsigned long last = 0;
     unsigned long now = millis();
 
     if (digitalRead(PTT_PIN) == HIGH) {
@@ -140,11 +139,4 @@ void loop() {
             }
         }
     }
-
-    /*
-    if (now - last > 1000) {
-        last = now;
-        mic.print_debug();
-    }
-    */
 }
