@@ -13,12 +13,9 @@ class MicDriver {
 
     static constexpr int BUFFER_LEN = 548;
 
-    static constexpr int NUM_BUFFERS_BITS = 3;
-    static constexpr int NUM_BUFFERS = 1 << NUM_BUFFERS_BITS;
-    static constexpr int NUM_BUFFERS_MASK = NUM_BUFFERS - 1;
-
-    // pointer to array of buffers
-    typedef uint8_t (*BufferPtr)[BUFFER_LEN];
+    static constexpr int RING_BUFFER_LEN_BITS = 13;
+    static constexpr int RING_BUFFER_LEN = 1 << RING_BUFFER_LEN_BITS;
+    static constexpr int RING_BUFFER_LEN_MASK = RING_BUFFER_LEN - 1;
 
     enum class BeginStatus {
         SUCCESS = 0,
@@ -32,8 +29,6 @@ class MicDriver {
     const pin_size_t adc_pin_number;
     const uint32_t dmac_channel;
 
-    volatile unsigned long callback_count = 0;
-
     adc_instance_ctrl_t adc_ctrl = {};
     dmac_instance_ctrl_t dmac_ctrl = {};
     elc_instance_ctrl_t elc_ctrl = {};
@@ -41,23 +36,21 @@ class MicDriver {
     FspTimer timer;
     elc_event_t timer_event;
 
-    // memory that will be written by DMA, read by timer_callback
+    // Memory written by DMA, read by timer callback
     uint16_t dma_buffer[DMA_BUFFER_LEN] __attribute__((aligned(4))) = {};
 
-    // current read position in the dma buffer
+    // Current read position in the DMA buffer
     volatile int dma_buffer_read_pos = DMA_BUFFER_LEN / 2;
 
-    // buffers to hold pending samples
-    uint8_t buffers[NUM_BUFFERS][BUFFER_LEN];
+    // Ring buffer — writer always advances, reader catches up
+    uint8_t ring_buffer[RING_BUFFER_LEN] = {};
 
-    // is the buffer ready to read from?
-    volatile bool buffer_populated[NUM_BUFFERS] = {0};
+    // Write pos advanced by timer ISR, read pos advanced by consumer
+    volatile int write_pos = 0;
+    int read_pos = 0;
 
-    // current buffer we're writing to
-    volatile int write_buffer_num = 0;
-
-    // current buffer position in the current buffer
-    volatile int write_buffer_pos = 0;
+    // Scratch buffer handed to caller for a single packet read
+    uint8_t read_buffer[BUFFER_LEN] = {};
 
    public:
     explicit MicDriver(float freq_hz, pin_size_t adc_pin_number,
@@ -66,18 +59,14 @@ class MicDriver {
 
     BeginStatus begin();
 
-    BufferPtr get_buffers();
-
-    int reserve_buffer_for_read();
-
-    void release_buffer(int buffer_num, bool was_read);
-
-    void print_debug();
+    // Returns a pointer to a BUFFER_LEN packet of mic data, or nullptr
+    // if not enough data is available yet.
+    // The pointer is valid until the next call to read_packet().
+    uint8_t* read_packet();
 
    private:
     BeginStatus init_timer();
 
-    // callback to handle moving data from the dma_buffer to sample buffers
     void on_timer(timer_callback_args_t* args);
 
     static void timer_callback(timer_callback_args_t* args) {

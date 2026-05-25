@@ -2,13 +2,14 @@
 #include <Serial.h>
 #include <WiFiS3.h>
 
-#include "SpeakerDriver.h"
 #include "MicDriver.h"
+#include "SpeakerDriver.h"
 #include "secrets.h"
 
 #define RECEIVE_UDP_PORT 6769
-#define SEND_UDP_PORT 6769
-#define FREQ_HZ 32000.0
+#define SEND_UDP_PORT 6770
+#define RECEIVE_FREQ 32000.0
+#define SEND_FREQ 11025.0
 
 #define SPEAKER_PIN A0
 #define SPEAKER_DMA_CHANNEL 0
@@ -18,17 +19,16 @@
 
 #define PTT_PIN A2
 
-SpeakerDriver speaker(FREQ_HZ, SPEAKER_PIN, SPEAKER_DMA_CHANNEL);
+SpeakerDriver speaker(RECEIVE_FREQ, SPEAKER_PIN, SPEAKER_DMA_CHANNEL);
 SpeakerDriver::BufferPtr speaker_buffers = speaker.get_buffers();
 
-MicDriver mic(FREQ_HZ, MIC_PIN, MIC_DMA_CHANNEL);
-MicDriver::BufferPtr mic_buffers = mic.get_buffers();
+MicDriver mic(SEND_FREQ, MIC_PIN, MIC_DMA_CHANNEL);
 
 IPAddress ip;
 WiFiUDP udp;
 
 IPAddress last_receive_from_ip;
-bool has_ip = false;
+bool has_ip = true;
 
 int init_wifi() {
     if (WiFi.status() == WL_NO_MODULE) {
@@ -100,42 +100,61 @@ void setup() {
 
 void loop() {
     static unsigned long last_ip_check = 0;
-    
+
     unsigned long now = millis();
 
-    if (digitalRead(PTT_PIN) == HIGH) {
+    bool ptt_pin_high = digitalRead(PTT_PIN) == HIGH;
+    bool ptt_pressed = !ptt_pin_high;
+
+    if (!ptt_pressed) {
         // Default operation - play received audio stream from network
-        int buffer_num = speaker.reserve_buffer();
-        if (buffer_num >= 0) {
-            int available = udp.parsePacket();
-            if (available > 0) {
-                if (!has_ip || now - last_ip_check > 10000) {
-                    // periodically update the ip address to the latest sending remote
-                    last_receive_from_ip = udp.remoteIP();
-                    has_ip = true;
-                    last_ip_check = now;
-                    Serial.println(last_receive_from_ip);
+        int available = udp.parsePacket();
+        if (available > 0) {
+            if (!has_ip || now - last_ip_check > 10000) {
+                // periodically update the ip address to the latest sending
+                // remote
+                last_receive_from_ip = udp.remoteIP();
+                has_ip = true;
+                last_ip_check = now;
+                Serial.println(last_receive_from_ip);
+            }
+
+            int buffer_num = speaker.reserve_buffer();
+            if (buffer_num >= 0) {
+                int bytes_to_read = min(available, SpeakerDriver::BUFFER_LEN);
+                udp.read(speaker_buffers[buffer_num], bytes_to_read);
+                if (available > SpeakerDriver::BUFFER_LEN) {
+                    // discard any remaining bytes in oversized packet
+                    udp.flush();
                 }
-                udp.read(speaker_buffers[buffer_num], available);
-                if (available < SpeakerDriver::BUFFER_LEN) {
-                    for (int i = available; i < SpeakerDriver::BUFFER_LEN; i++) {
+                if (bytes_to_read < SpeakerDriver::BUFFER_LEN) {
+                    for (int i = bytes_to_read; i < SpeakerDriver::BUFFER_LEN;
+                         i++) {
                         speaker_buffers[buffer_num][i] = 0;
                     }
                 }
+
                 speaker.release_buffer(buffer_num, true);
             } else {
-                speaker.release_buffer(buffer_num, false);
+                udp.flush();
             }
         }
     } else {
+        // PTT button is pressed
+
+        // Ensure we flush out incoming packets while we are streaming out
+        while (udp.parsePacket() > 0) {
+            udp.flush();
+        }
+
         if (last_receive_from_ip != INADDR_NONE) {
-            // Button is pressed, and we have a target IP: Stream mic audio
-            int buffer_num = mic.reserve_buffer_for_read();
-            if (buffer_num >= 0) {
+            // We have a target IP: Stream mic audio
+            uint8_t* packet = mic.read_packet();
+            if (packet != nullptr) {
                 udp.beginPacket(last_receive_from_ip, SEND_UDP_PORT);
-                udp.write(mic_buffers[buffer_num], MicDriver::BUFFER_LEN);
+                udp.write(packet, MicDriver::BUFFER_LEN);
                 udp.endPacket();
-                mic.release_buffer(buffer_num, true);
+                yield();
             }
         }
     }

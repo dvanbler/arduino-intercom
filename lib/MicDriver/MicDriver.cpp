@@ -16,26 +16,11 @@ MicDriver::MicDriver(float freq_hz, pin_size_t adc_pin_number,
 MicDriver::~MicDriver() {}
 
 MicDriver::BeginStatus MicDriver::begin() {
-    /*
-     Configures:
-       timer at freqHz ->
-       overflow event ->
-       elc ->
-       adc0 ->
-       triggers read on A1 ->
-       scan end event ->
-       DMA trigger
-
-     Result: DMA buffer gets filled at specified freqHz by analog reads on A1
-    */
-
-    // Timer config
     auto rv = init_timer();
     if (rv != MicDriver::BeginStatus::SUCCESS) {
         return rv;
     }
 
-    // ADC config
     adc_extended_cfg_t adc_extend = {};
     adc_extend.add_average_count = ADC_ADD_OFF;
     adc_extend.clearing = ADC_CLEAR_AFTER_READ_OFF;
@@ -69,15 +54,12 @@ MicDriver::BeginStatus MicDriver::begin() {
         return MicDriver::BeginStatus::FAIL;
     }
 
-    // Must convert the arduino pin to the channel, which is not necessarily the
-    // same (i.e. A0 -> channel 14, A1 -> channel 0)
     int32_t adc_pin_idx = digitalPinToAnalogPin(adc_pin_number);
     pin_size_t bsp_pin = digitalPinToBspPin(adc_pin_idx);
 
-    // Enable scanning on only the specified input pin
     adc_window_cfg_t adc_window_cfg = {};
     adc_channel_cfg_t adc_ch_cfg = {};
-    adc_ch_cfg.scan_mask = (1U << bsp_pin);  // See ADC_MASK_CHANNEL_0;
+    adc_ch_cfg.scan_mask = (1U << bsp_pin);
     adc_ch_cfg.scan_mask_group_b = 0;
     adc_ch_cfg.add_mask = 0;
     adc_ch_cfg.p_window_cfg = &adc_window_cfg;
@@ -86,13 +68,11 @@ MicDriver::BeginStatus MicDriver::begin() {
     adc_ch_cfg.sample_hold_states = 0;
     R_ADC_ScanCfg(&adc_ctrl, &adc_ch_cfg);
 
-    // ELC config. Link timer overflow to ADC scan
     elc_cfg_t elc_cfg = {ELC_EVENT_NONE};
     fsp_err = R_ELC_Open(&elc_ctrl, &elc_cfg);
     fsp_err = R_ELC_Enable(&elc_ctrl);
     fsp_err = R_ELC_LinkSet(&g_elc_ctrl, ELC_PERIPHERAL_ADC0, timer_event);
 
-    // DMAC config. Read from ADC -> ring buffer, triggered by ADC scan end.
     transfer_info_t dmac_info = {};
     dmac_extended_cfg_t dmac_extend_cfg = {};
     transfer_cfg_t dmac_cfg = {&dmac_info, &dmac_extend_cfg};
@@ -116,8 +96,7 @@ MicDriver::BeginStatus MicDriver::begin() {
     dmac_info.transfer_settings_word_b.irq = TRANSFER_IRQ_END;
     dmac_info.transfer_settings_word_b.chain_mode =
         TRANSFER_CHAIN_MODE_DISABLED;
-    dmac_info.p_src =
-        (void*)&R_ADC0->ADDR[bsp_pin];  // (void*)&R_ADC0->ADDR[0];
+    dmac_info.p_src = (void*)&R_ADC0->ADDR[bsp_pin];
     dmac_info.p_dest = (void*)&dma_buffer[0];
     dmac_info.length = DMA_BUFFER_LEN;
     dmac_info.num_blocks = 0;
@@ -133,27 +112,37 @@ MicDriver::BeginStatus MicDriver::begin() {
     return MicDriver::BeginStatus::SUCCESS;
 }
 
-MicDriver::BufferPtr MicDriver::get_buffers() { return buffers; }
+uint8_t* MicDriver::read_packet() {
+    // Snapshot write_pos once — it's volatile and advances in the ISR
+    int w = write_pos;
 
-int MicDriver::reserve_buffer_for_read() {
-    int buffer_num = write_buffer_num;
-    for (int i = 0; i < NUM_BUFFERS; i++) {
-        if (buffer_populated[buffer_num]) {
-            return buffer_num;
-        }
-        buffer_num++;
-        buffer_num = buffer_num & NUM_BUFFERS_MASK;
+    // Calculate how many samples are available
+    int available = (w - read_pos) & RING_BUFFER_LEN_MASK;
+
+    if (available < BUFFER_LEN) {
+        return nullptr;  // not enough data yet
     }
-    return -1;
-}
 
-void MicDriver::release_buffer(int buffer_num, bool was_read) {
-    buffer_populated[buffer_num] = !was_read;
+    // If we've fallen more than one ring buffer behind, skip ahead to the
+    // most recent BUFFER_LEN samples so we don't send stale audio
+    if (available > RING_BUFFER_LEN / 2) {
+        read_pos = (w - BUFFER_LEN) & RING_BUFFER_LEN_MASK;
+    }
+
+    // Copy BUFFER_LEN bytes from ring buffer into read_buffer,
+    // handling wrap-around
+    int first_chunk = std::min(BUFFER_LEN, RING_BUFFER_LEN - read_pos);
+    memcpy(read_buffer, &ring_buffer[read_pos], first_chunk);
+    if (first_chunk < BUFFER_LEN) {
+        memcpy(read_buffer + first_chunk, &ring_buffer[0],
+               BUFFER_LEN - first_chunk);
+    }
+
+    read_pos = (read_pos + BUFFER_LEN) & RING_BUFFER_LEN_MASK;
+    return read_buffer;
 }
 
 void MicDriver::on_timer(timer_callback_args_t* args) {
-    // ADC value range (volts): 1.25V +- 1.0V, [0.25V - 2.25V]
-    // With 14-bit ADC and 5V VDD, we get these parameters:
     constexpr int32_t IN_MIN = 819;
     constexpr int32_t IN_MAX = 7373;
     constexpr int32_t OUT_MIN = 0;
@@ -161,39 +150,16 @@ void MicDriver::on_timer(timer_callback_args_t* args) {
     constexpr int32_t SCALE_FIXED =
         (int32_t)((OUT_MAX - OUT_MIN) * 16384.0f / (IN_MAX - IN_MIN));
 
-    if (!buffer_populated[write_buffer_num]) {
-        // Convert 14-bit adc mic reading to 8-bit sample
-        int32_t dma_value = dma_buffer[dma_buffer_read_pos++];
-        int32_t result = (dma_value - IN_MIN) * SCALE_FIXED >> 14;
-        uint8_t clamped = (uint8_t)std::clamp(result, OUT_MIN, OUT_MAX);
-        buffers[write_buffer_num][write_buffer_pos++] = clamped;
-
-        if (write_buffer_pos == BUFFER_LEN) {
-            buffer_populated[write_buffer_num] = true;
-
-            write_buffer_pos = 0;
-            write_buffer_num++;
-            write_buffer_num &= NUM_BUFFERS_MASK;
-        }
-    } else {
-        dma_buffer_read_pos++;
-    }
-
+    // Convert 14-bit ADC reading to 8-bit sample
+    int32_t dma_value = dma_buffer[dma_buffer_read_pos++];
     dma_buffer_read_pos &= DMA_BUFFER_LEN_MASK;
-}
 
-void MicDriver::print_debug() {
-    // pct range: (.25 / 5) - (2.25 / 5) = .05 - .45
-    // 14-bit range = 819 - 7373
+    int32_t result = (dma_value - IN_MIN) * SCALE_FIXED >> 14;
+    uint8_t clamped = (uint8_t)std::clamp(result, OUT_MIN, OUT_MAX);
 
-    transfer_properties_t props = {};
-    R_DMAC_InfoGet(&dmac_ctrl, &props);
-    uint16_t writePos = DMA_BUFFER_LEN - props.transfer_length_remaining;
-
-    Serial.print("dma_buffer[");
-    Serial.print(writePos);
-    Serial.print("]=");
-    Serial.println(dma_buffer[writePos]);
+    // Always write — overwrite old data if consumer is too slow
+    ring_buffer[write_pos] = clamped;
+    write_pos = (write_pos + 1) & RING_BUFFER_LEN_MASK;
 }
 
 MicDriver::BeginStatus MicDriver::init_timer() {
@@ -209,43 +175,21 @@ MicDriver::BeginStatus MicDriver::init_timer() {
 
     if (timer_type == GPT_TIMER) {
         switch (timer_index) {
-            case 0:
-                timer_event = ELC_EVENT_GPT0_COUNTER_OVERFLOW;
-                break;
-            case 1:
-                timer_event = ELC_EVENT_GPT1_COUNTER_OVERFLOW;
-                break;
-            case 2:
-                timer_event = ELC_EVENT_GPT2_COUNTER_OVERFLOW;
-                break;
-            case 3:
-                timer_event = ELC_EVENT_GPT3_COUNTER_OVERFLOW;
-                break;
-            case 4:
-                timer_event = ELC_EVENT_GPT4_COUNTER_OVERFLOW;
-                break;
-            case 5:
-                timer_event = ELC_EVENT_GPT5_COUNTER_OVERFLOW;
-                break;
-            case 6:
-                timer_event = ELC_EVENT_GPT6_COUNTER_OVERFLOW;
-                break;
-            case 7:
-                timer_event = ELC_EVENT_GPT7_COUNTER_OVERFLOW;
-                break;
-            default:
-                return MicDriver::BeginStatus::FAIL_TIMER_INDEX_OUT_OF_RANGE;
+            case 0: timer_event = ELC_EVENT_GPT0_COUNTER_OVERFLOW; break;
+            case 1: timer_event = ELC_EVENT_GPT1_COUNTER_OVERFLOW; break;
+            case 2: timer_event = ELC_EVENT_GPT2_COUNTER_OVERFLOW; break;
+            case 3: timer_event = ELC_EVENT_GPT3_COUNTER_OVERFLOW; break;
+            case 4: timer_event = ELC_EVENT_GPT4_COUNTER_OVERFLOW; break;
+            case 5: timer_event = ELC_EVENT_GPT5_COUNTER_OVERFLOW; break;
+            case 6: timer_event = ELC_EVENT_GPT6_COUNTER_OVERFLOW; break;
+            case 7: timer_event = ELC_EVENT_GPT7_COUNTER_OVERFLOW; break;
+            default: return MicDriver::BeginStatus::FAIL_TIMER_INDEX_OUT_OF_RANGE;
         }
     } else if (timer_type == AGT_TIMER) {
         switch (timer_index) {
-            case 0:
-                timer_event = ELC_EVENT_AGT0_INT;
-                break;
-            case 1:
-                timer_event = ELC_EVENT_AGT1_INT;
-                break;
-            default:
-                return MicDriver::BeginStatus::FAIL_TIMER_INDEX_OUT_OF_RANGE;
+            case 0: timer_event = ELC_EVENT_AGT0_INT; break;
+            case 1: timer_event = ELC_EVENT_AGT1_INT; break;
+            default: return MicDriver::BeginStatus::FAIL_TIMER_INDEX_OUT_OF_RANGE;
         }
     }
 
