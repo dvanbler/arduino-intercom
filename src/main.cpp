@@ -2,6 +2,7 @@
 #include <Serial.h>
 #include <WiFiS3.h>
 
+#include "CircularBuffer.h"
 #include "MicDriver.h"
 #include "SpeakerDriver.h"
 #include "secrets.h"
@@ -10,19 +11,15 @@
 #define SEND_UDP_PORT 6770
 #define RECEIVE_FREQ 32000.0
 #define SEND_FREQ 11025.0
+#define PACKET_LEN 548
 
 #define SPEAKER_PIN A0
-#define SPEAKER_DMA_CHANNEL 0
-
 #define MIC_PIN A1
-#define MIC_DMA_CHANNEL 1
 
 #define PTT_PIN A2
 
-SpeakerDriver speaker(RECEIVE_FREQ, SPEAKER_PIN, SPEAKER_DMA_CHANNEL);
-SpeakerDriver::BufferPtr speaker_buffers = speaker.get_buffers();
-
-MicDriver mic(SEND_FREQ, MIC_PIN, MIC_DMA_CHANNEL);
+CircularBuffer buffer;
+SpeakerDriver speaker(RECEIVE_FREQ, SPEAKER_PIN, buffer);
 
 IPAddress ip;
 WiFiUDP udp;
@@ -73,40 +70,59 @@ int setup_impl() {
     Serial.println(ip);
 
     Serial.print("Init speaker driver...");
-    auto speaker_rv = speaker.begin();
-    if (speaker_rv != SpeakerDriver::BeginStatus::SUCCESS) {
+    auto speaker_rv = speaker.init();
+    if (speaker_rv != SpeakerDriver::InitStatus::SUCCESS) {
         return -1;
     }
     Serial.println(" [√]");
 
+    /*
     Serial.print("Init mic driver...");
-    auto mic_rv = mic.begin();
-    if (mic_rv != MicDriver::BeginStatus::SUCCESS) {
+    auto mic_rv = mic.init();
+    if (mic_rv != MicDriver::InitStatus::SUCCESS) {
         return -1;
     }
     Serial.println(" [√]");
+    */
 
     return 0;
 }
 
 void setup() {
+    pinMode(PTT_PIN, INPUT_PULLUP);
+
     int rv = setup_impl();
     if (rv != 0) {
         while (true);
     }
 
-    pinMode(PTT_PIN, INPUT_PULLUP);
+    speaker.start();
 }
 
 void loop() {
+    static uint8_t packet[PACKET_LEN] = {};
+
+    static bool last_ptt_pressed = false;
     static unsigned long last_ip_check = 0;
+
+    static unsigned long start = millis();
+    static unsigned long drop_count = 0;
+    static unsigned long last_report = millis();
+    static int bytes_read = 0;
 
     unsigned long now = millis();
 
     bool ptt_pin_high = digitalRead(PTT_PIN) == HIGH;
     bool ptt_pressed = !ptt_pin_high;
 
+    bool ptt_changed = (last_ptt_pressed != ptt_pressed);
+    last_ptt_pressed = ptt_pressed;
+
     if (!ptt_pressed) {
+        if (ptt_changed) {
+            speaker.start();
+        }
+
         // Default operation - play received audio stream from network
         int available = udp.parsePacket();
         if (available > 0) {
@@ -119,35 +135,33 @@ void loop() {
                 Serial.println(last_receive_from_ip);
             }
 
-            int buffer_num = speaker.reserve_buffer();
-            if (buffer_num >= 0) {
-                int bytes_to_read = min(available, SpeakerDriver::BUFFER_LEN);
-                udp.read(speaker_buffers[buffer_num], bytes_to_read);
-                if (available > SpeakerDriver::BUFFER_LEN) {
-                    // discard any remaining bytes in oversized packet
-                    udp.flush();
-                }
-                if (bytes_to_read < SpeakerDriver::BUFFER_LEN) {
-                    for (int i = bytes_to_read; i < SpeakerDriver::BUFFER_LEN; i++) {
-                        speaker_buffers[buffer_num][i] = 0;
-                    }
-                }
-
-                speaker.release_buffer(buffer_num, true);
-            } else {
+            int bytes_to_read = min(available, PACKET_LEN);
+            bytes_read = udp.read(packet, bytes_to_read);
+            if (available > PACKET_LEN) {
+                // discard any remaining bytes in oversized packet
                 udp.flush();
             }
+            int bytes_buffered = speaker.play(packet, bytes_read);
+            if (bytes_buffered != bytes_read) {
+                drop_count++;
+            }
+            yield();
         }
     } else {
         // PTT button is pressed
+
+        if (ptt_changed) {
+            speaker.stop();
+        }
 
         // Ensure we flush out incoming packets while we are streaming out
         while (udp.parsePacket() > 0) {
             udp.flush();
         }
 
-        if (last_receive_from_ip != INADDR_NONE) {
+        if (has_ip && now - last_ip_check < 60000) {
             // We have a target IP: Stream mic audio
+            /*
             uint8_t* packet = mic.read_packet();
             if (packet != nullptr) {
                 udp.beginPacket(last_receive_from_ip, SEND_UDP_PORT);
@@ -155,6 +169,22 @@ void loop() {
                 udp.endPacket();
                 yield();
             }
+            */
+        } else {
+            /*
+            speaker.buzz(300);
+            */
         }
+    }
+
+    if (now - last_report >= 1000) {
+        last_report = now;
+        Serial.print((int) speaker.get_status());
+        Serial.print(" - ");
+        Serial.print(speaker.get_last_value());
+        Serial.print(" - ");
+        Serial.print(bytes_read);
+        Serial.print(" - ");
+        Serial.println(buffer.available());
     }
 }

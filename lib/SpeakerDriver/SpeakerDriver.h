@@ -3,22 +3,11 @@
 #include <FspTimer.h>
 #include <dac.h>
 
+#include "../CircularBuffer/CircularBuffer.h"
+
 class SpeakerDriver {
    public:
-    static constexpr int DMA_BUFFER_LEN_BITS = 9;
-    static constexpr int DMA_BUFFER_LEN = 1 << DMA_BUFFER_LEN_BITS;
-    static constexpr int DMA_BUFFER_LEN_MASK = DMA_BUFFER_LEN - 1;
-
-    static constexpr int BUFFER_LEN = 548;
-
-    static constexpr int NUM_BUFFERS_BITS = 3;
-    static constexpr int NUM_BUFFERS = 1 << NUM_BUFFERS_BITS;
-    static constexpr int NUM_BUFFERS_MASK = NUM_BUFFERS - 1;
-
-    // pointer to array of buffers
-    typedef uint8_t (*BufferPtr)[BUFFER_LEN];
-
-    enum class BeginStatus {
+    enum class InitStatus {
         SUCCESS = 0,
         FAIL_NOT_A_DAC_PIN = -1,
         FAIL_IS_8_BIT_DAC = -2,
@@ -28,70 +17,61 @@ class SpeakerDriver {
         FAIL_TIMER_INDEX_OUT_OF_RANGE = -6
     };
 
+    enum class Status {
+        STOPPED = 0,
+        STARTING = 1,
+        PLAYING = 2,
+        STOPPING = 3
+    };
+
    private:
+    static constexpr int REQUIRED_BUFFERED_TO_START = CircularBuffer::BUFFER_LEN / 2;
+
     const float freq_hz;
     const pin_size_t dac_pin_number;
-    const uint32_t dmac_channel;
 
-    void* dac_address;
-
-    dmac_instance_ctrl_t dmac_ctrl = {};
+    volatile uint16_t* dac_address;
 
     FspTimer timer;
-    elc_event_t timer_event;
+    CircularBuffer& buffer;
 
-    // memory that will be read by DMA, written to by timer_callback
-    volatile uint16_t dma_buffer[DMA_BUFFER_LEN]
-        __attribute__((aligned(4))) = {};
-
-    // current write position in the dma buffer
-    volatile int dma_buffer_write_pos = DMA_BUFFER_LEN / 2;
-
-    // buffers to hold pending samples
-    uint8_t buffers[NUM_BUFFERS][BUFFER_LEN];
-
-    // is the buffer ready to write to the dma buffer?
-    volatile bool buffer_populated[NUM_BUFFERS] = {0};
-
-    // current buffer we're reading from
-    volatile int read_buffer_num = 0;
-
-    // current read position in the current buffer
-    volatile int read_buffer_pos = 0;
+    uint16_t last_value = 0;
+    volatile Status status = Status::STOPPED;
 
    public:
     explicit SpeakerDriver(float freq_hz, pin_size_t dac_pin_number,
-                           uint32_t dmac_channel);
-    ~SpeakerDriver();
+                           CircularBuffer& buffer);
+    ~SpeakerDriver() {}
 
-    BeginStatus begin();
+    // One-time hardware init
+    InitStatus init();
 
-    BufferPtr get_buffers();
+    // Starts processing buffer for speaker output
+    void start();
 
-    // Gets the index of next buffer you can write to. This must only be called
-    // once prior to calling release_buffer. Returns -1 if no buffer is
-    // available yet.
-    int reserve_buffer();
+    // Stops processing buffer for speaker output - call when switching to mic
+    // mode
+    void stop();
 
-    // Indicates that the buffer is ready to be sent to the speaker.
-    // Modifications must not be made to the buffer after this call.
-    void release_buffer(int buffer_num, bool populated);
+    // Inserts samples into the buffer
+    int play(const uint8_t* samples, int len);
+
+    Status get_status() {
+        return status;
+    }
+
+    uint16_t get_last_value() {
+        return last_value;
+    }
 
    private:
-    BeginStatus init_dac();
+    InitStatus init_dac();
+    InitStatus init_timer();
 
-    BeginStatus init_timer();
-
-    BeginStatus init_dma();
-
-    // callback to handle moving data from the sample buffers to the dma_buffer
-    void on_timer(timer_callback_args_t* args);
+    void on_timer_overflow();
 
     static void timer_callback(timer_callback_args_t* args) {
-        if (args->event != TIMER_EVENT_CYCLE_END) {
-            return;
-        }
         SpeakerDriver* self = (SpeakerDriver*)(args->p_context);
-        self->on_timer(args);
+        self->on_timer_overflow();
     }
 };
