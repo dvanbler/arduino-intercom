@@ -3,8 +3,6 @@
 #include <FspTimer.h>
 #include <analog.h>
 #include <r_adc.h>
-#include <r_dmac.h>
-#include <r_elc.h>
 
 #include "CircularBuffer.h"
 
@@ -16,12 +14,6 @@ class MicDriver {
         FAIL_CANNOT_GET_TIMER = -5,
         FAIL_TIMER_INDEX_OUT_OF_RANGE = -6
     };
-
-    volatile uint32_t timer_count = 0;
-    volatile uint16_t last_raw = 0;
-    volatile uint32_t adc_count = 0;
-
-    elc_event_t timer_event;
 
    private:
     const float freq_hz;

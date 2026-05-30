@@ -65,7 +65,7 @@ class CircularBuffer {
         return data;
     }
 
-    int consume(uint8_t *data, int len) {
+    int consume(uint8_t* data, int len) {
         int num_bytes = min(available(), len);
 
         for (int i = 0; i < num_bytes; i++) {

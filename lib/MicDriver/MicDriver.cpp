@@ -1,8 +1,8 @@
 #include "MicDriver.h"
 
 #include <FspTimer.h>
+#include <analog.h>
 #include <r_adc.h>
-#include <r_elc.h>
 
 #include <algorithm>
 
@@ -49,9 +49,9 @@ MicDriver::InitStatus MicDriver::init_adc() {
     // to ELC sync so the timer overflow event drives each conversion.
     adc->cfg.trigger = ADC_TRIGGER_SOFTWARE;
 
-    // Must run before R_ADC_Open: fills cfg.scan_end_irq so Open can enable ADIE
-    // and configure the NVIC. Calling it after Open leaves ADIE=0 and the NVIC
-    // disabled, so the scan-end ISR never fires even when scans complete.
+    // Must run before R_ADC_Open: fills cfg.scan_end_irq so Open can enable
+    // ADIE and configure the NVIC. Calling it after Open leaves ADIE=0 and the
+    // NVIC disabled, so the scan-end ISR never fires even when scans complete.
     if (!IRQManager::getInstance().addADCScanEnd(adc)) {
         Serial.println("addADCScanEnd failed");
         return InitStatus::FAIL;
@@ -95,45 +95,9 @@ MicDriver::InitStatus MicDriver::init_timer() {
     if (timer_index < 0) return InitStatus::FAIL_CANNOT_GET_TIMER;
 
     if (timer_type == GPT_TIMER) {
-        switch (timer_index) {
-            case 0:
-                timer_event = ELC_EVENT_GPT0_COUNTER_OVERFLOW;
-                break;
-            case 1:
-                timer_event = ELC_EVENT_GPT1_COUNTER_OVERFLOW;
-                break;
-            case 2:
-                timer_event = ELC_EVENT_GPT2_COUNTER_OVERFLOW;
-                break;
-            case 3:
-                timer_event = ELC_EVENT_GPT3_COUNTER_OVERFLOW;
-                break;
-            case 4:
-                timer_event = ELC_EVENT_GPT4_COUNTER_OVERFLOW;
-                break;
-            case 5:
-                timer_event = ELC_EVENT_GPT5_COUNTER_OVERFLOW;
-                break;
-            case 6:
-                timer_event = ELC_EVENT_GPT6_COUNTER_OVERFLOW;
-                break;
-            case 7:
-                timer_event = ELC_EVENT_GPT7_COUNTER_OVERFLOW;
-                break;
-            default:
-                return InitStatus::FAIL_TIMER_INDEX_OUT_OF_RANGE;
-        }
+        if (timer_index > 7) return InitStatus::FAIL_TIMER_INDEX_OUT_OF_RANGE;
     } else if (timer_type == AGT_TIMER) {
-        switch (timer_index) {
-            case 0:
-                timer_event = ELC_EVENT_AGT0_INT;
-                break;
-            case 1:
-                timer_event = ELC_EVENT_AGT1_INT;
-                break;
-            default:
-                return InitStatus::FAIL_TIMER_INDEX_OUT_OF_RANGE;
-        }
+        if (timer_index > 1) return InitStatus::FAIL_TIMER_INDEX_OUT_OF_RANGE;
     }
 
     timer.begin(TIMER_MODE_PERIODIC, timer_type, timer_index, freq_hz, 50.0f,
@@ -145,7 +109,6 @@ MicDriver::InitStatus MicDriver::init_timer() {
 }
 
 void MicDriver::on_timer(timer_callback_args_t* args) {
-    timer_count++;
     R_ADC_ScanStart(&adc->ctrl);
 };
 
@@ -157,12 +120,8 @@ void MicDriver::on_adc_complete(adc_callback_args_t* args) {
     constexpr int32_t SCALE_FIXED =
         (int32_t)((OUT_MAX - OUT_MIN) * 16384.0f / (IN_MAX - IN_MIN));
 
-    adc_count++;
-
     uint16_t raw = R_ADC0->ADDR[bsp_pin];
     int32_t result = (raw - IN_MIN) * SCALE_FIXED >> 14;
     uint8_t sample = (uint8_t)std::clamp(result, OUT_MIN, OUT_MAX);
     buffer.produce(sample);
-
-    last_raw = raw;
 }

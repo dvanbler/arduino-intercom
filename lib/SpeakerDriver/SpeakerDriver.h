@@ -1,7 +1,6 @@
 #pragma once
 
 #include <FspTimer.h>
-#include <dac.h>
 
 #include "CircularBuffer.h"
 
@@ -53,10 +52,6 @@ class SpeakerDriver {
 
     // Inserts samples into the buffer
     int play(const uint8_t* samples, int len);
-
-    Status get_status() { return status; }
-
-    int get_last_value() { return last_value; }
 
    private:
     InitStatus init_dac();

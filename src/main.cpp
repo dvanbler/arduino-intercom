@@ -101,16 +101,7 @@ void setup() {
 
 void loop() {
     static uint8_t packet[PACKET_LEN] = {};
-
     static bool last_ptt_pressed = false;
-    static unsigned long last_ip_check = 0;
-
-    static unsigned long start = millis();
-    static unsigned long drop_count = 0;
-    static unsigned long last_report = millis();
-    static int bytes_read = 0;
-
-    unsigned long now = millis();
 
     bool ptt_pin_high = digitalRead(PTT_PIN) == HIGH;
     bool ptt_pressed = !ptt_pin_high;
@@ -128,15 +119,12 @@ void loop() {
         int available = udp_rx.parsePacket();
         if (available > 0) {
             int bytes_to_read = min(available, PACKET_LEN);
-            bytes_read = udp_rx.read(packet, bytes_to_read);
+            int bytes_read = udp_rx.read(packet, bytes_to_read);
             if (available > PACKET_LEN) {
                 // discard any remaining bytes in oversized packet
                 udp_rx.flush();
             }
-            int bytes_buffered = speaker.play(packet, bytes_read);
-            if (bytes_buffered != bytes_read) {
-                drop_count++;
-            }
+            speaker.play(packet, bytes_read);
         }
     } else {
         // PTT button is pressed
@@ -151,7 +139,7 @@ void loop() {
             yield();
         }
 
-        bytes_read = mic.read(packet, PACKET_LEN);
+        int bytes_read = mic.read(packet, PACKET_LEN);
         if (bytes_read > 0) {
             udp_tx.beginPacket(broadcast_ip, SEND_UDP_PORT);
             udp_tx.write(packet, bytes_read);
@@ -159,16 +147,4 @@ void loop() {
         }
     }
     yield();
-
-    if (now - last_report >= 1000) {
-        last_report = now;
-        Serial.print(" - buffer available: ");
-        Serial.print(buffer.available());
-        Serial.print(" - Timer count: ");
-        Serial.print(mic.timer_count);
-        Serial.print(" - adc count: ");
-        Serial.print(mic.adc_count);
-        Serial.print(" - last raw: ");
-        Serial.println(mic.last_raw);
-    }
 }
