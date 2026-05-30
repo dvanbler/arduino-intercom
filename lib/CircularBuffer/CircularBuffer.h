@@ -49,7 +49,15 @@ class CircularBuffer {
         return bytes_written;
     }
 
-    int consume_8() {
+    bool produce(uint8_t data) {
+        if (is_full()) return false;
+
+        buffer[producer_pos] = data;
+        producer_pos = (producer_pos + 1) & BUFFER_LEN_MASK;
+        return true;
+    }
+
+    int consume() {
         if (is_empty()) return -1;
 
         int data = buffer[consumer_pos];
@@ -57,13 +65,13 @@ class CircularBuffer {
         return data;
     }
 
-    int consume_16() {
-        if (available() < 2) return -1;
+    int consume(uint8_t *data, int len) {
+        int num_bytes = min(available(), len);
 
-        uint16_t raw_value;
-        std::memcpy(&raw_value, &buffer[consumer_pos], sizeof(raw_value));
-
-        consumer_pos = (consumer_pos + 2) & BUFFER_LEN_MASK;
-        return static_cast<int>(raw_value);
+        for (int i = 0; i < num_bytes; i++) {
+            data[i] = buffer[consumer_pos];
+            consumer_pos = (consumer_pos + 1) & BUFFER_LEN_MASK;
+        }
+        return num_bytes;
     }
 };

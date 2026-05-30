@@ -3,7 +3,7 @@
 #include <FspTimer.h>
 #include <dac.h>
 
-#include "../CircularBuffer/CircularBuffer.h"
+#include "CircularBuffer.h"
 
 class SpeakerDriver {
    public:
@@ -17,24 +17,20 @@ class SpeakerDriver {
         FAIL_TIMER_INDEX_OUT_OF_RANGE = -6
     };
 
-    enum class Status {
-        STOPPED = 0,
-        STARTING = 1,
-        PLAYING = 2,
-        STOPPING = 3
-    };
+    enum class Status { STOPPED = 0, STARTING = 1, PLAYING = 2, STOPPING = 3 };
 
    private:
-    static constexpr int REQUIRED_BUFFERED_TO_START = CircularBuffer::BUFFER_LEN / 2;
+    static constexpr int REQUIRED_BUFFERED_TO_START =
+        CircularBuffer::BUFFER_LEN / 2;
     static constexpr int FADE_OUT_STEPS = 160;
 
     const float freq_hz;
     const pin_size_t dac_pin_number;
+    CircularBuffer& buffer;
 
     volatile uint16_t* dac_address;
 
     FspTimer timer;
-    CircularBuffer& buffer;
 
     volatile Status status = Status::STOPPED;
     volatile int last_value = 0;
@@ -58,13 +54,9 @@ class SpeakerDriver {
     // Inserts samples into the buffer
     int play(const uint8_t* samples, int len);
 
-    Status get_status() {
-        return status;
-    }
+    Status get_status() { return status; }
 
-    int get_last_value() {
-        return last_value;
-    }
+    int get_last_value() { return last_value; }
 
    private:
     InitStatus init_dac();

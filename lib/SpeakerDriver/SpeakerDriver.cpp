@@ -3,7 +3,7 @@
 #include <FspTimer.h>
 #include <dac.h>
 
-#include "../CircularBuffer/CircularBuffer.h"
+#include "CircularBuffer.h"
 
 SpeakerDriver::SpeakerDriver(float freq_hz, pin_size_t dac_pin_number,
                              CircularBuffer& buffer)
@@ -67,9 +67,12 @@ void SpeakerDriver::start() {
 
 void SpeakerDriver::stop() {
     noInterrupts();
-    fade_out_diff = last_value / FADE_OUT_STEPS;
+    fade_out_diff = max(1, last_value / FADE_OUT_STEPS);
     status = Status::STOPPING;
     interrupts();
+    while (status != Status::STOPPED) {
+        // busy-wait for fade-out to complete
+    }
 }
 
 int SpeakerDriver::play(const uint8_t* samples, int len) {
@@ -78,7 +81,7 @@ int SpeakerDriver::play(const uint8_t* samples, int len) {
 
 void SpeakerDriver::on_timer_overflow() {
     if (status == Status::PLAYING) {
-        int b = buffer.consume_8();
+        int b = buffer.consume();
         if (b != -1) {
             // Buffer has more data - output it
             last_value = (uint16_t)(b << 4);
@@ -89,7 +92,8 @@ void SpeakerDriver::on_timer_overflow() {
             fade_out_diff = last_value / FADE_OUT_STEPS;
         }
     } else if (status == Status::STARTING) {
-        // Starting - wait until we have enough buffered data before we start playing
+        // Starting - wait until we have enough buffered data before we start
+        // playing
         if (buffer.available() >= REQUIRED_BUFFERED_TO_START) {
             status = Status::PLAYING;
         } else {

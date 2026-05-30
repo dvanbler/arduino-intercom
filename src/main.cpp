@@ -20,12 +20,13 @@
 
 CircularBuffer buffer;
 SpeakerDriver speaker(RECEIVE_FREQ, SPEAKER_PIN, buffer);
+MicDriver mic(SEND_FREQ, MIC_PIN, buffer);
 
 IPAddress ip;
-WiFiUDP udp;
+WiFiUDP udp_rx;
+WiFiUDP udp_tx;
 
-IPAddress last_receive_from_ip;
-bool has_ip = false;
+IPAddress broadcast_ip(192, 168, 143, 255);
 
 int init_wifi() {
     if (WiFi.status() == WL_NO_MODULE) {
@@ -49,7 +50,8 @@ int init_wifi() {
         ip = WiFi.localIP();
     } while (ip == INADDR_NONE);
 
-    udp.begin(RECEIVE_UDP_PORT);
+    udp_rx.begin(RECEIVE_UDP_PORT);
+    udp_tx.begin(SEND_UDP_PORT);
 
     return 0;
 }
@@ -76,14 +78,12 @@ int setup_impl() {
     }
     Serial.println(" [√]");
 
-    /*
     Serial.print("Init mic driver...");
     auto mic_rv = mic.init();
     if (mic_rv != MicDriver::InitStatus::SUCCESS) {
         return -1;
     }
     Serial.println(" [√]");
-    */
 
     return 0;
 }
@@ -120,71 +120,55 @@ void loop() {
 
     if (!ptt_pressed) {
         if (ptt_changed) {
+            mic.stop();
             speaker.start();
         }
 
         // Default operation - play received audio stream from network
-        int available = udp.parsePacket();
+        int available = udp_rx.parsePacket();
         if (available > 0) {
-            if (!has_ip || now - last_ip_check > 10000) {
-                // periodically update the ip address to the latest sending
-                // remote
-                last_receive_from_ip = udp.remoteIP();
-                has_ip = true;
-                last_ip_check = now;
-                Serial.println(last_receive_from_ip);
-            }
-
             int bytes_to_read = min(available, PACKET_LEN);
-            bytes_read = udp.read(packet, bytes_to_read);
+            bytes_read = udp_rx.read(packet, bytes_to_read);
             if (available > PACKET_LEN) {
                 // discard any remaining bytes in oversized packet
-                udp.flush();
+                udp_rx.flush();
             }
             int bytes_buffered = speaker.play(packet, bytes_read);
             if (bytes_buffered != bytes_read) {
                 drop_count++;
             }
-            yield();
         }
     } else {
         // PTT button is pressed
 
         if (ptt_changed) {
             speaker.stop();
+            mic.start();
         }
 
-        // Ensure we flush out incoming packets while we are streaming out
-        while (udp.parsePacket() > 0) {
-            udp.flush();
+        while (udp_rx.parsePacket() > 0) {
+            udp_rx.flush();
+            yield();
         }
 
-        if (has_ip && now - last_ip_check < 60000) {
-            // We have a target IP: Stream mic audio
-            /*
-            uint8_t* packet = mic.read_packet();
-            if (packet != nullptr) {
-                udp.beginPacket(last_receive_from_ip, SEND_UDP_PORT);
-                udp.write(packet, MicDriver::BUFFER_LEN);
-                udp.endPacket();
-                yield();
-            }
-            */
-        } else {
-            /*
-            speaker.buzz(300);
-            */
+        bytes_read = mic.read(packet, PACKET_LEN);
+        if (bytes_read > 0) {
+            udp_tx.beginPacket(broadcast_ip, SEND_UDP_PORT);
+            udp_tx.write(packet, bytes_read);
+            udp_tx.endPacket();
         }
     }
+    yield();
 
     if (now - last_report >= 1000) {
         last_report = now;
-        Serial.print((int) speaker.get_status());
-        Serial.print(" - ");
-        Serial.print(speaker.get_last_value());
-        Serial.print(" - ");
-        Serial.print(bytes_read);
-        Serial.print(" - ");
-        Serial.println(buffer.available());
+        Serial.print(" - buffer available: ");
+        Serial.print(buffer.available());
+        Serial.print(" - Timer count: ");
+        Serial.print(mic.timer_count);
+        Serial.print(" - adc count: ");
+        Serial.print(mic.adc_count);
+        Serial.print(" - last raw: ");
+        Serial.println(mic.last_raw);
     }
 }
