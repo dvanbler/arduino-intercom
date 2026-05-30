@@ -26,6 +26,7 @@ class SpeakerDriver {
 
    private:
     static constexpr int REQUIRED_BUFFERED_TO_START = CircularBuffer::BUFFER_LEN / 2;
+    static constexpr int FADE_OUT_STEPS = 160;
 
     const float freq_hz;
     const pin_size_t dac_pin_number;
@@ -35,8 +36,9 @@ class SpeakerDriver {
     FspTimer timer;
     CircularBuffer& buffer;
 
-    uint16_t last_value = 0;
     volatile Status status = Status::STOPPED;
+    volatile int last_value = 0;
+    volatile int fade_out_diff;
 
    public:
     explicit SpeakerDriver(float freq_hz, pin_size_t dac_pin_number,
@@ -60,7 +62,7 @@ class SpeakerDriver {
         return status;
     }
 
-    uint16_t get_last_value() {
+    int get_last_value() {
         return last_value;
     }
 

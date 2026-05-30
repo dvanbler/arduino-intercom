@@ -57,7 +57,6 @@ SpeakerDriver::InitStatus SpeakerDriver::init_timer() {
 }
 
 void SpeakerDriver::start() {
-    Serial.println("START");
     noInterrupts();
     last_value = 0;
     buffer.reset();
@@ -68,6 +67,7 @@ void SpeakerDriver::start() {
 
 void SpeakerDriver::stop() {
     noInterrupts();
+    fade_out_diff = last_value / FADE_OUT_STEPS;
     status = Status::STOPPING;
     interrupts();
 }
@@ -86,15 +86,28 @@ void SpeakerDriver::on_timer_overflow() {
         } else {
             // Buffer is empty - transition to starting
             status = Status::STARTING;
+            fade_out_diff = last_value / FADE_OUT_STEPS;
         }
     } else if (status == Status::STARTING) {
         // Starting - wait until we have enough buffered data before we start playing
         if (buffer.available() >= REQUIRED_BUFFERED_TO_START) {
             status = Status::PLAYING;
+        } else {
+            // Fade out the last sample we played -> 0 to avoid popping
+            last_value -= fade_out_diff;
+            if (last_value < 0) {
+                last_value = 0;
+            }
+            *dac_address = last_value;
         }
     } else if (status == Status::STOPPING) {
-        // Stopping - for now we'll transition immediately to stopped. In future we'll make this step down to 0.
-        status = Status::STOPPED;
+        // Stopping - fade out
+        last_value -= fade_out_diff;
+        if (last_value < 0) {
+            last_value = 0;
+            status = Status::STOPPED;
+        }
+        *dac_address = last_value;
     } else if (status == Status::STOPPED) {
         timer.stop();
     }
