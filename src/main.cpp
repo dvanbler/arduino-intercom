@@ -13,6 +13,8 @@
 #define SEND_FREQ 11025.0
 #define PACKET_LEN 548
 
+#define HEARTBEAT_RX_UDP_PORT 6771
+
 #define SPEAKER_PIN A0
 #define MIC_PIN A1
 
@@ -25,8 +27,14 @@ MicDriver mic(SEND_FREQ, MIC_PIN, buffer);
 IPAddress ip;
 WiFiUDP udp_rx;
 WiFiUDP udp_tx;
+WiFiUDP udp_rx_heartbeat;
 
 IPAddress broadcast_ip(192, 168, 143, 255);
+
+constexpr int BUZZ_FREQ_HZ = 500;
+constexpr int BUZZ_LEN = (int)RECEIVE_FREQ / BUZZ_FREQ_HZ;
+uint8_t buzz_samples[BUZZ_LEN] = {};
+uint8_t silence_samples[BUZZ_LEN] = {};
 
 int init_wifi() {
     if (WiFi.status() == WL_NO_MODULE) {
@@ -52,6 +60,7 @@ int init_wifi() {
 
     udp_rx.begin(RECEIVE_UDP_PORT);
     udp_tx.begin(SEND_UDP_PORT);
+    udp_rx_heartbeat.begin(HEARTBEAT_RX_UDP_PORT);
 
     return 0;
 }
@@ -85,6 +94,13 @@ int setup_impl() {
     }
     Serial.println(" [√]");
 
+    Serial.print("Init buzz samples...");
+    for (int i = 0; i < BUZZ_LEN; i++) {
+        buzz_samples[i] = (i < BUZZ_LEN / 2) ? (128 - 4) : (128 + 4);
+        silence_samples[i] = 128;
+    }
+    Serial.println(" [√]");
+
     return 0;
 }
 
@@ -102,6 +118,27 @@ void setup() {
 void loop() {
     static uint8_t packet[PACKET_LEN] = {};
     static bool last_ptt_pressed = false;
+    static unsigned long last_heartbeat_check = 0;
+    static unsigned long last_heartbeat_active = 0;
+    static bool heartbeat_active = false;
+    static bool ptt_ready = false;
+
+    unsigned long now = millis();
+
+    // Check every second for a heartbeat packet
+    if (now - last_heartbeat_check >= 1000) {
+        last_heartbeat_check = now;
+        while (udp_rx_heartbeat.parsePacket() > 0) {
+            last_heartbeat_active = now;
+            udp_rx_heartbeat.flush();
+            yield();
+        }
+
+        // If we've received a heartbeat packet within the last 4 seconds, then
+        // consider receiver active
+        heartbeat_active =
+            (last_heartbeat_active > 0) && (now - last_heartbeat_active) < 4000;
+    }
 
     bool ptt_pin_high = digitalRead(PTT_PIN) == HIGH;
     bool ptt_pressed = !ptt_pin_high;
@@ -111,6 +148,7 @@ void loop() {
 
     if (!ptt_pressed) {
         if (ptt_changed) {
+            ptt_ready = false;
             mic.stop();
             speaker.start();
         }
@@ -128,10 +166,36 @@ void loop() {
         }
     } else {
         // PTT button is pressed
-
         if (ptt_changed) {
-            speaker.stop();
-            mic.start();
+            if (heartbeat_active) {
+                speaker.stop();
+                mic.start();
+                ptt_ready = true;
+            } else {
+                // Stop playing and re-start to clear out the buffer
+                ptt_ready = false;
+                speaker.stop();
+                speaker.start();
+
+                // Buzz error sound
+
+                // Initial ramp up
+                for (uint8_t i = 0; i < 128; i += 2) {
+                    speaker.play(&i, 1);
+                }
+
+                for (int i = 0; i < 42; i++) {
+                    speaker.play(buzz_samples, BUZZ_LEN);
+                }
+
+                for (int i = 0; i < 42; i++) {
+                    speaker.play(silence_samples, BUZZ_LEN);
+                }
+
+                for (int i = 0; i < 42; i++) {
+                    speaker.play(buzz_samples, BUZZ_LEN);
+                }
+            }
         }
 
         while (udp_rx.parsePacket() > 0) {
@@ -139,11 +203,13 @@ void loop() {
             yield();
         }
 
-        int bytes_read = mic.read(packet, PACKET_LEN);
-        if (bytes_read > 0) {
-            udp_tx.beginPacket(broadcast_ip, SEND_UDP_PORT);
-            udp_tx.write(packet, bytes_read);
-            udp_tx.endPacket();
+        if (ptt_ready) {
+            int bytes_read = mic.read(packet, PACKET_LEN);
+            if (bytes_read > 0) {
+                udp_tx.beginPacket(broadcast_ip, SEND_UDP_PORT);
+                udp_tx.write(packet, bytes_read);
+                udp_tx.endPacket();
+            }
         }
     }
     yield();

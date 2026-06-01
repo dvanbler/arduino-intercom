@@ -67,8 +67,10 @@ void SpeakerDriver::start() {
 
 void SpeakerDriver::stop() {
     noInterrupts();
-    fade_out_diff = max(1, last_value / FADE_OUT_STEPS);
-    status = Status::STOPPING;
+    if (status == Status::STARTING || status == Status::PLAYING) {
+        fade_out_diff = max(1, last_value / FADE_OUT_STEPS);
+        status = Status::STOPPING;
+    }
     interrupts();
     while (status != Status::STOPPED) {
         // busy-wait for fade-out to complete
