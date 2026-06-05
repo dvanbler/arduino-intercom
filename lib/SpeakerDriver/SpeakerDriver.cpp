@@ -71,10 +71,16 @@ void SpeakerDriver::stop() {
         fade_out_diff = max(1, last_value / FADE_OUT_STEPS);
         status = Status::STOPPING;
     }
+    bool need_wait = (status == Status::STOPPING);
     interrupts();
-    while (status != Status::STOPPED) {
-        // busy-wait for fade-out to complete
+
+    if (need_wait) {
+        // Wait for the ISR to fade out and reach STOPPED.
+        while (status != Status::STOPPED) {
+        }
     }
+
+    timer.stop();
 }
 
 int SpeakerDriver::play(const uint8_t* samples, int len) {
@@ -115,6 +121,6 @@ void SpeakerDriver::on_timer_overflow() {
         }
         *dac_address = last_value;
     } else if (status == Status::STOPPED) {
-        timer.stop();
+        *dac_address = 0;
     }
 }
