@@ -36,15 +36,15 @@ constexpr int BUZZ_LEN = (int)RECEIVE_FREQ / BUZZ_FREQ_HZ;
 uint8_t buzz_samples[BUZZ_LEN] = {};
 uint8_t silence_samples[BUZZ_LEN] = {};
 
-int init_wifi() {
-    if (WiFi.status() == WL_NO_MODULE) {
-        return -1;
-    }
-
-    String fv = WiFi.firmwareVersion();
-    if (fv < WIFI_FIRMWARE_LATEST_VERSION) {
-        return -2;
-    }
+// (Re)associates with the AP and (re)binds the UDP sockets. Blocks until
+// connected, retrying every 10s.
+void connect_wifi() {
+    // Tear down any prior association/sockets for a clean reconnect (no-ops on
+    // first boot).
+    WiFi.disconnect();
+    udp_rx.stop();
+    udp_tx.stop();
+    udp_rx_heartbeat.stop();
 
     int status = WL_IDLE_STATUS;
     do {
@@ -61,6 +61,19 @@ int init_wifi() {
     udp_rx.begin(RECEIVE_UDP_PORT);
     udp_tx.begin(SEND_UDP_PORT);
     udp_rx_heartbeat.begin(HEARTBEAT_RX_UDP_PORT);
+}
+
+int init_wifi() {
+    if (WiFi.status() == WL_NO_MODULE) {
+        return -1;
+    }
+
+    String fv = WiFi.firmwareVersion();
+    if (fv < WIFI_FIRMWARE_LATEST_VERSION) {
+        return -2;
+    }
+
+    connect_wifi();
 
     return 0;
 }
@@ -122,8 +135,37 @@ void loop() {
     static unsigned long last_heartbeat_active = 0;
     static bool heartbeat_active = false;
     static bool ptt_ready = false;
+    static unsigned long last_wifi_check = 0;
 
     unsigned long now = millis();
+
+    // Check the WiFi link once a second and recover if it has dropped.
+    if (now - last_wifi_check >= 1000) {
+        last_wifi_check = now;
+        if (WiFi.status() != WL_CONNECTED) {
+            Serial.println("WiFi link lost - reconnecting...");
+
+            // Put audio hardware into a known state before the blocking
+            // reconnect (both are safe if already stopped).
+            mic.stop();
+            speaker.stop();
+
+            connect_wifi();
+
+            Serial.print("WiFi reconnected. IP: ");
+            Serial.println(ip);
+
+            // Resume receive mode and clear PTT/heartbeat state so the next
+            // iteration re-evaluates from a clean slate.
+            speaker.start();
+            last_ptt_pressed = false;
+            ptt_ready = false;
+            heartbeat_active = false;
+            last_heartbeat_active = 0;
+
+            now = millis();
+        }
+    }
 
     // Check every second for a heartbeat packet
     if (now - last_heartbeat_check >= 1000) {
